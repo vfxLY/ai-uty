@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, MouseEvent, WheelEvent } from 'react';
+import React, { useState, useRef, useEffect, MouseEvent, WheelEvent, DragEvent } from 'react';
 import Button from '../ui/Button';
 import { 
   ensureHttps, queuePrompt, getHistory, getImageUrl, generateClientId, uploadImage, getLogs, parseConsoleProgress 
@@ -164,6 +164,52 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   };
 
   const handleMouseUp = () => setIsDragging(false);
+
+  // --- Drag and Drop Logic ---
+
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (!file.type.startsWith('image/')) return;
+
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const src = ev.target?.result as string;
+        const img = new Image();
+        img.src = src;
+        img.onload = () => {
+            // Calculate world coordinates from drop position
+            const clientX = e.clientX;
+            const clientY = e.clientY;
+            
+            // Transform screen coordinates to canvas world coordinates
+            const x = (clientX - view.x) / view.scale;
+            const y = (clientY - view.y) / view.scale;
+
+            const newItem: ImageItem = {
+                id: Math.random().toString(36).substr(2, 9),
+                type: 'image',
+                // Center the image on the cursor
+                x: x - (img.width / 4), 
+                y: y - (img.height / 4),
+                width: img.width / 2,
+                height: img.height / 2,
+                zIndex: topZ + 1,
+                src
+            };
+            setTopZ(prev => prev + 1);
+            setItems(prev => [...prev, newItem]);
+            setActiveItemId(newItem.id);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleItemMouseDown = (e: MouseEvent, id: string) => {
       // Bring to front
@@ -827,6 +873,8 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
           >
               <div 
                 className="absolute origin-top-left will-change-transform"
@@ -914,13 +962,6 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"></path><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"></polygon></svg>
                        </div>
                        <span className="text-sm font-bold text-slate-600 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm whitespace-nowrap">Text to Image</span>
-                   </button>
-
-                   <button onClick={addEditNode} className="flex items-center gap-3 group/item">
-                       <div className="w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center text-slate-600 group-hover/item:text-blue-500 group-hover/item:scale-110 transition-all">
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                       </div>
-                       <span className="text-sm font-bold text-slate-600 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm whitespace-nowrap">Image Edit</span>
                    </button>
                    
                    {/* Add Image Upload Hidden Input */}

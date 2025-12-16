@@ -38,6 +38,9 @@ interface GeneratorItem extends BaseItem {
     cfg: number;
     isGenerating: boolean;
     progress: number;
+    // New fields for unified node
+    resultImage?: string;
+    mode: 'input' | 'result';
   };
 }
 
@@ -172,7 +175,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
 
   const addGeneratorNode = () => {
       const id = Math.random().toString(36).substr(2, 9);
-      const centerX = ((-view.x) + (window.innerWidth / 2) - 160) / view.scale;
+      const centerX = ((-view.x) + (window.innerWidth / 2) - 200) / view.scale;
       const centerY = ((-view.y) + (window.innerHeight / 2) - 200) / view.scale;
 
       const newItem: GeneratorItem = {
@@ -180,19 +183,20 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
           type: 'generator',
           x: centerX,
           y: centerY,
-          width: 320,
-          height: 450, // Auto-height mostly
+          width: 400, // Square shape like an image
+          height: 400,
           zIndex: topZ + 1,
           data: {
               model: 'flux',
-              prompt: 'A futuristic city with flying cars, neon lights, 8k resolution...',
-              negPrompt: 'low quality, blurry',
+              prompt: '',
+              negPrompt: '',
               width: 1024,
               height: 1024,
               steps: 20,
               cfg: 3.5,
               isGenerating: false,
-              progress: 0
+              progress: 0,
+              mode: 'input'
           }
       };
       setTopZ(prev => prev + 1);
@@ -201,11 +205,9 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   };
 
   const addEditNode = () => {
-      // Find currently selected image if any
       const selectedImage = items.find(i => i.id === activeItemId && i.type === 'image');
       
       const id = Math.random().toString(36).substr(2, 9);
-      // Place near selected image or center
       const centerX = selectedImage ? selectedImage.x + selectedImage.width + 20 : ((-view.x) + (window.innerWidth / 2) - 160) / view.scale;
       const centerY = selectedImage ? selectedImage.y : ((-view.y) + (window.innerHeight / 2) - 150) / view.scale;
 
@@ -219,7 +221,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
           zIndex: topZ + 1,
           data: {
               targetId: selectedImage ? selectedImage.id : null,
-              prompt: 'Make it sunset, add rain...',
+              prompt: 'Make it sunset...',
               steps: 20,
               cfg: 2.5,
               isGenerating: false,
@@ -340,25 +342,36 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                   const img = outputs[key].images[0];
                                   const imgUrl = getImageUrl(url, img.filename, img.subfolder, img.type);
                                   
-                                  // Spawn Result Image
-                                  const imgObj = new Image();
-                                  imgObj.src = imgUrl;
-                                  imgObj.onload = () => {
-                                      const newItem: ImageItem = {
-                                          id: Math.random().toString(36).substr(2, 9),
-                                          type: 'image',
-                                          // Place to the right of the generator
-                                          x: item.x + item.width + 50,
-                                          y: item.y,
-                                          width: imgObj.width / 2, // Default scale down
-                                          height: imgObj.height / 2,
-                                          zIndex: topZ + 2,
-                                          src: imgUrl
+                                  // Update logic based on item type
+                                  if (item.type === 'generator') {
+                                      // Transform the node itself
+                                      // Pre-fetch image dimensions if needed, or just let it fill
+                                      updateItemData(itemId, { 
+                                          isGenerating: false, 
+                                          progress: 100, 
+                                          resultImage: imgUrl,
+                                          mode: 'result'
+                                      });
+                                  } else {
+                                      // Editor spawns new image (keep existing behavior for Editor for now)
+                                      const imgObj = new Image();
+                                      imgObj.src = imgUrl;
+                                      imgObj.onload = () => {
+                                          const newItem: ImageItem = {
+                                              id: Math.random().toString(36).substr(2, 9),
+                                              type: 'image',
+                                              x: item.x + item.width + 50,
+                                              y: item.y,
+                                              width: imgObj.width / 2,
+                                              height: imgObj.height / 2,
+                                              zIndex: topZ + 2,
+                                              src: imgUrl
+                                          };
+                                          setTopZ(prev => prev + 2);
+                                          setItems(prev => [...prev, newItem]);
+                                          updateItemData(itemId, { isGenerating: false, progress: 100 });
                                       };
-                                      setTopZ(prev => prev + 2);
-                                      setItems(prev => [...prev, newItem]);
-                                      updateItemData(itemId, { isGenerating: false, progress: 100 });
-                                  };
+                                  }
                                   return;
                               }
                           }
@@ -367,7 +380,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                       }
                   }
 
-                  // Update progress (fake or log based)
+                  // Update progress
                   const logs = await getLogs(url);
                   const parsed = parseConsoleProgress(logs, 20);
                   const currentProg = item.type === 'generator' ? item.data.progress : item.data.progress;
@@ -377,7 +390,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                   setTimeout(checkStatus, 1000);
               } catch (e) {
                   console.error(e);
-                  updateItemData(itemId, { isGenerating: false, progress: 0 }); // Reset on error
+                  updateItemData(itemId, { isGenerating: false, progress: 0 }); 
               }
           };
 
@@ -392,81 +405,124 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
 
   // --- Renderers ---
 
-  const renderGeneratorNode = (item: GeneratorItem) => (
-      <div 
-        className="w-full h-full flex flex-col p-5 bg-white/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/60 animate-fade-in"
-        onMouseDown={e => e.stopPropagation()} // Stop canvas drag when interacting with node internals
-      >
-          <div className="flex justify-between items-center mb-4">
-              <div className="flex gap-2 p-1 bg-slate-100 rounded-lg">
-                  <button 
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${item.data.model === 'flux' ? 'bg-white shadow-sm text-primary' : 'text-slate-500'}`}
-                    onClick={() => updateItemData(item.id, { model: 'flux' })}
-                  >
-                      FLUX
-                  </button>
-                  <button 
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${item.data.model === 'sdxl' ? 'bg-white shadow-sm text-purple-600' : 'text-slate-500'}`}
-                    onClick={() => updateItemData(item.id, { model: 'sdxl' })}
-                  >
-                      SDXL
-                  </button>
-              </div>
-              <div className="text-xs font-mono text-slate-400">GEN-{item.id.substr(0,4)}</div>
-          </div>
+  const renderGeneratorNode = (item: GeneratorItem) => {
+      const isInput = item.data.mode === 'input';
 
-          <div className="flex-1 space-y-3 overflow-y-auto custom-scrollbar pr-1">
-              <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">PROMPT</label>
-                  <textarea 
-                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                    rows={4}
-                    value={item.data.prompt}
-                    onChange={(e) => updateItemData(item.id, { prompt: e.target.value })}
-                    placeholder="Describe your image..."
-                  />
-              </div>
-              
-              {item.data.model === 'sdxl' && (
-                  <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">NEGATIVE</label>
-                      <textarea 
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                        rows={2}
-                        value={item.data.negPrompt}
-                        onChange={(e) => updateItemData(item.id, { negPrompt: e.target.value })}
-                      />
-                  </div>
-              )}
+      return (
+        <div 
+          className="relative group w-full h-full flex flex-col transition-all duration-300"
+          onMouseDown={e => {
+            // If clicking strictly on the container (padding area), allow drag
+            // Stop propagation only if clicking interactive elements
+            if ((e.target as HTMLElement).tagName === 'TEXTAREA') {
+               e.stopPropagation();
+            }
+          }}
+        >
+            {/* Top Hover Controls */}
+            {isInput && (
+                <div className="absolute bottom-full left-0 w-full flex justify-center pb-4 opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-2 group-hover:translate-y-0 pointer-events-none group-hover:pointer-events-auto z-50">
+                    <div className="flex items-center gap-2 p-1.5 bg-white/80 backdrop-blur-md rounded-2xl shadow-xl border border-white/50">
+                        <button 
+                            className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${item.data.model === 'flux' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'}`}
+                            onClick={() => updateItemData(item.id, { model: 'flux' })}
+                        >
+                            FLUX
+                        </button>
+                        <button 
+                            className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${item.data.model === 'sdxl' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'}`}
+                            onClick={() => updateItemData(item.id, { model: 'sdxl' })}
+                        >
+                            SDXL
+                        </button>
+                        <div className="w-[1px] h-4 bg-slate-300 mx-1"></div>
+                        <div className="flex items-center gap-1 px-2">
+                            <span className="text-[10px] font-bold text-slate-400">SIZE</span>
+                            <input 
+                                className="w-12 bg-transparent border-b border-slate-300 text-xs text-center focus:outline-none" 
+                                value={item.data.width} 
+                                onChange={e => updateItemData(item.id, { width: Number(e.target.value) })}
+                            />
+                            <span className="text-[10px] text-slate-300">x</span>
+                            <input 
+                                className="w-12 bg-transparent border-b border-slate-300 text-xs text-center focus:outline-none" 
+                                value={item.data.height} 
+                                onChange={e => updateItemData(item.id, { height: Number(e.target.value) })}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
 
-              <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 mb-1">WIDTH</label>
-                    <input type="number" className="w-full p-2 bg-slate-50 rounded-lg text-xs border border-slate-200" value={item.data.width} onChange={e => updateItemData(item.id, { width: Number(e.target.value) })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 mb-1">HEIGHT</label>
-                    <input type="number" className="w-full p-2 bg-slate-50 rounded-lg text-xs border border-slate-200" value={item.data.height} onChange={e => updateItemData(item.id, { height: Number(e.target.value) })} />
-                  </div>
-              </div>
-          </div>
+            {/* Main Container */}
+            <div className={`w-full h-full glass-panel rounded-3xl overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-300 border border-white/60 relative ${item.data.isGenerating ? 'ring-4 ring-primary/30' : ''}`}>
+                
+                {item.data.isGenerating && (
+                    <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center">
+                        <div className="w-16 h-16 border-4 border-slate-200 border-t-primary rounded-full animate-spin mb-4"></div>
+                        <span className="text-sm font-bold text-slate-600 animate-pulse">{item.data.progress}% Generatng...</span>
+                    </div>
+                )}
 
-          <div className="mt-4 pt-4 border-t border-slate-100">
-             {item.data.isGenerating ? (
-                 <div className="h-10 w-full bg-slate-100 rounded-xl overflow-hidden relative">
-                     <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-slate-500 z-10">
-                         {item.data.progress}%
-                     </div>
-                     <div className="h-full bg-primary/20 transition-all duration-300" style={{ width: `${item.data.progress}%` }}></div>
-                 </div>
-             ) : (
-                 <Button onClick={() => executeGeneration(item.id)} className="py-2.5 text-sm">
-                    Generate
-                 </Button>
-             )}
-          </div>
-      </div>
-  );
+                {isInput ? (
+                    <div className="w-full h-full p-6 flex flex-col">
+                         <textarea 
+                            className="flex-1 w-full bg-transparent text-2xl font-medium text-slate-700 placeholder:text-slate-300 resize-none focus:outline-none text-center pt-20 leading-relaxed"
+                            placeholder={item.data.model === 'flux' ? "Imagine something wonderful..." : "Describe your SDXL prompt..."}
+                            value={item.data.prompt}
+                            onChange={(e) => updateItemData(item.id, { prompt: e.target.value })}
+                        />
+                        {item.data.model === 'sdxl' && (
+                            <input 
+                                className="w-full bg-transparent border-t border-slate-200/50 py-3 text-sm text-slate-500 placeholder:text-slate-300 focus:outline-none text-center"
+                                placeholder="Negative prompt (optional)"
+                                value={item.data.negPrompt}
+                                onChange={(e) => updateItemData(item.id, { negPrompt: e.target.value })}
+                            />
+                        )}
+                    </div>
+                ) : (
+                    <div className="w-full h-full relative group/image">
+                        <img src={item.data.resultImage} className="w-full h-full object-cover" alt="result" />
+                        
+                        {/* Result Controls */}
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 opacity-0 group-hover/image:opacity-100 transition-all duration-300 translate-y-4 group-hover/image:translate-y-0">
+                            <button 
+                                onClick={() => updateItemData(item.id, { mode: 'input' })}
+                                className="bg-white/90 backdrop-blur text-slate-700 px-4 py-2 rounded-full shadow-lg text-xs font-bold hover:bg-white hover:scale-105 transition-all flex items-center gap-2"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                Edit Prompt
+                            </button>
+                            <a 
+                                href={item.data.resultImage} 
+                                download={`gen-${item.id}.png`}
+                                className="bg-white/90 backdrop-blur text-slate-700 px-4 py-2 rounded-full shadow-lg text-xs font-bold hover:bg-white hover:scale-105 transition-all flex items-center gap-2"
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                Download
+                            </a>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Bottom Hover Controls (Generate Button) */}
+            {isInput && !item.data.isGenerating && (
+                <div className="absolute top-full left-0 w-full flex justify-center pt-6 opacity-0 group-hover:opacity-100 transition-all duration-300 transform -translate-y-2 group-hover:translate-y-0 pointer-events-none group-hover:pointer-events-auto z-50">
+                    <button 
+                        onClick={() => executeGeneration(item.id)}
+                        className="bg-gradient-to-r from-primary to-blue-600 text-white px-8 py-3 rounded-full shadow-lg shadow-blue-500/30 font-bold tracking-wide hover:shadow-blue-500/50 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        GENERATE
+                    </button>
+                </div>
+            )}
+        </div>
+      );
+  };
 
   const renderEditNode = (item: EditorItem) => {
       const targetImage = items.find(i => i.id === item.data.targetId && i.type === 'image') as ImageItem | undefined;

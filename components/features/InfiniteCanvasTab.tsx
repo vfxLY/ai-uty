@@ -625,7 +625,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                       stroke="#3b82f6"
                       strokeWidth="2"
                       strokeDasharray="8,8"
-                      className="animate-pulse opacity-60"
+                      className="connection-line opacity-60"
                   />
               );
           }
@@ -643,7 +643,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                   stroke="#3b82f6"
                   strokeWidth="2"
                   strokeDasharray="8,8"
-                  className="animate-pulse opacity-60"
+                  className="connection-line opacity-60"
               />
           );
       });
@@ -790,9 +790,9 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                 onChange={e => updateItemData(item.id, { height: Number(e.target.value) })}
                             />
 
-                            {/* Dropdown Menu */}
+                            {/* Dropdown Menu - UPDATED: OPEN UPWARDS */}
                             {activeSizeMenuId === item.id && (
-                                <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-100 p-2 z-[60] min-w-[140px] animate-fade-in flex flex-col gap-1">
+                                <div className="absolute bottom-full left-0 mb-2 bg-white rounded-xl shadow-xl border border-slate-100 p-2 z-[60] min-w-[140px] animate-fade-in flex flex-col gap-1 origin-bottom">
                                     <div className="text-[10px] font-bold text-slate-400 px-2 py-1 mb-1">PRESETS</div>
                                     {SIZE_PRESETS.map(preset => (
                                         <button
@@ -1092,6 +1092,15 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                </div>
           </div>
       </div>
+      <style>{`
+          @keyframes dashFlow {
+              from { stroke-dashoffset: 24; }
+              to { stroke-dashoffset: 0; }
+          }
+          .connection-line {
+              animation: dashFlow 1s linear infinite;
+          }
+      `}</style>
     </div>
   );
 };

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
-import { Input, TextArea } from '../ui/Input';
+import { TextArea } from '../ui/Input';
 import Slider from '../ui/Slider';
 import { ensureHttps, queuePrompt, getHistory, getImageUrl, generateClientId, uploadImage } from '../../services/api';
 import { generateEditWorkflow } from '../../services/workflows';
@@ -12,7 +12,7 @@ interface EditTabProps {
   setServerUrl: (url: string) => void;
 }
 
-const EditTab: React.FC<EditTabProps> = ({ serverUrl, setServerUrl }) => {
+const EditTab: React.FC<EditTabProps> = ({ serverUrl, setServerUrl: _ }) => {
   const [prompt, setPrompt] = useState('修改姿势敞开衣服露出诱人的胸部 穿着黑丝内衣');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);

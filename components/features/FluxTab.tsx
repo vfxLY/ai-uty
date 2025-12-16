@@ -76,7 +76,7 @@ const FluxTab: React.FC<FluxTabProps> = ({ serverUrl, setServerUrl }) => {
           // Check logs for progress
           // Note: This is experimental as parsing logs is brittle
           const logs = await getLogs(url); 
-          const parsed = parseConsoleProgress(logs, steps);
+          const parsed = parseConsoleProgress(logs);
           if (parsed > 0) {
              setStatus(prev => ({ ...prev, progress: parsed, statusText: `Sampling... ${parsed}%` }));
           } else {

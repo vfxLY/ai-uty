@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
-import { Input, TextArea } from '../ui/Input';
+import { TextArea } from '../ui/Input';
 import Slider from '../ui/Slider';
 import { ensureHttps, queuePrompt, getHistory, getImageUrl, generateClientId } from '../../services/api';
 import { generateSdxlWorkflow } from '../../services/workflows';
@@ -12,7 +12,7 @@ interface SdxlTabProps {
   setServerUrl: (url: string) => void;
 }
 
-const SdxlTab: React.FC<SdxlTabProps> = ({ serverUrl, setServerUrl }) => {
+const SdxlTab: React.FC<SdxlTabProps> = ({ serverUrl, setServerUrl: _ }) => {
   const [positive, setPositive] = useState('1girl, 18 yo, solo, long hair, looking at viewer, smile...');
   const [negative, setNegative] = useState('bad quality, worst quality, lowres...');
   const [width, setWidth] = useState(1080);

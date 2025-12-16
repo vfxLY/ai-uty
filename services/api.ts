@@ -72,7 +72,7 @@ export const getImageUrl = (serverUrl: string, filename: string, subfolder: stri
   return `${serverUrl}/view?${params.toString()}`;
 };
 
-export const parseConsoleProgress = (consoleText: string, totalSteps: number): number => {
+export const parseConsoleProgress = (consoleText: string): number => {
     // Regex from original code
     const percentRegex = /(\d+)%\|[█ ]+\| \d+\/\d+/;
     const stepRegex = /(\d+)\/(\d+)\s+\[.+\]/;

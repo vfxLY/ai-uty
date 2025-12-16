@@ -356,11 +356,26 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                   const img = outputs[key].images[0];
                                   const imgUrl = getImageUrl(url, img.filename, img.subfolder, img.type);
                                   
-                                  // Update the node IN PLACE
+                                  // SUCCESS: Spawn NEW Image Item next to original
+                                  const newItem: ImageItem = {
+                                      id: Math.random().toString(36).substr(2, 9),
+                                      type: 'image',
+                                      x: item.x + item.width + 40,
+                                      y: item.y,
+                                      width: item.width, // Inherit size
+                                      height: item.height,
+                                      zIndex: topZ + 2, // Bring to front
+                                      src: imgUrl
+                                  };
+
+                                  setTopZ(prev => prev + 2);
+                                  setItems(prev => [...prev, newItem]);
+
+                                  // Reset Source Item State
                                   if (item.type === 'image') {
-                                      updateImageItem(itemId, { src: imgUrl, isEditing: false, editProgress: 100, editPrompt: '' });
+                                      updateImageItem(itemId, { isEditing: false, editProgress: 100, editPrompt: '' });
                                   } else {
-                                      updateItemData(itemId, { resultImage: imgUrl, isEditing: false, editProgress: 100, editPrompt: '' });
+                                      updateItemData(itemId, { isEditing: false, editProgress: 100, editPrompt: '' });
                                   }
                                   return;
                               }
@@ -383,6 +398,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
 
               } catch (e) {
                   console.error(e);
+                  // Reset on error
                   if (item.type === 'image') updateImageItem(itemId, { isEditing: false });
                   else updateItemData(itemId, { isEditing: false });
               }
@@ -517,7 +533,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
 
   const renderEditOverlay = (id: string, isEditing: boolean, progress: number, prompt: string | undefined, onPromptChange: (val: string) => void, onExecute: () => void) => (
       <div 
-        className="absolute bottom-4 left-4 right-4 translate-y-8 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300 z-50"
+        className={`absolute bottom-4 left-4 right-4 transition-all duration-300 z-50 ${isEditing ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 focus-within:translate-y-0 focus-within:opacity-100'}`}
         onMouseDown={e => e.stopPropagation()}
       >
           <div className="glass-panel p-2 rounded-xl flex items-center gap-2 shadow-xl border border-white/50 bg-white/60 backdrop-blur-md">

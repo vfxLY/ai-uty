@@ -120,6 +120,9 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   // Mouse Tracking for Paste
   const mousePosRef = useRef({ x: 0, y: 0 });
 
+  // Preview Image State
+  const [previewImage, setPreviewImage] = useState<{ src: string; dims?: { w: number; h: number } } | null>(null);
+
   // Z-Index Management
   const [topZ, setTopZ] = useState(10);
 
@@ -236,6 +239,12 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
            setIsSpacePressed(true);
         }
         
+        // Escape closes preview
+        if (e.key === 'Escape' && previewImage) {
+            setPreviewImage(null);
+            return;
+        }
+        
         // Copy: Ctrl+C
         if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
             if (selectedIds.size > 0 && !(e.target as HTMLElement).matches('input, textarea')) {
@@ -275,7 +284,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [selectedIds, items, clipboard]); // removed pasteItems dependency here as it's not used in this effect
+  }, [selectedIds, items, clipboard, previewImage]); // Added previewImage to dependency to close it
 
   // --- Canvas Interaction Logic ---
 
@@ -932,6 +941,10 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   const renderImageNode = (item: ImageItem) => (
       <div 
         className="relative group w-full h-full rounded-2xl shadow-sm hover:shadow-2xl transition-all duration-300 select-none"
+        onDoubleClick={(e) => {
+            e.stopPropagation();
+            setPreviewImage({ src: item.src });
+        }}
       >
           {/* Main Image */}
           <img 
@@ -1081,7 +1094,13 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                         )}
                     </div>
                 ) : (
-                    <div className="w-full h-full relative group/image">
+                    <div 
+                        className="w-full h-full relative group/image"
+                        onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            if(item.data.resultImage) setPreviewImage({ src: item.data.resultImage });
+                        }}
+                    >
                         <img src={item.data.resultImage} className="w-full h-full object-cover pointer-events-none select-none" alt="result" />
                         
                         {/* Edit Overlay for Generator Result */}
@@ -1349,6 +1368,70 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                    </label>
                </div>
           </div>
+          
+          {/* Full Screen Image Preview Overlay */}
+          {previewImage && (
+             <div 
+               className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-8 animate-fade-in"
+               onClick={() => setPreviewImage(null)}
+             >
+                 {/* Close Button */}
+                 <button 
+                    className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors"
+                    onClick={() => setPreviewImage(null)}
+                 >
+                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                 </button>
+
+                 <div className="relative max-w-[90vw] max-h-[90vh] flex gap-4" onClick={e => e.stopPropagation()}>
+                    {/* Main Image */}
+                    <img 
+                       src={previewImage.src} 
+                       className="max-w-[80vw] max-h-[90vh] object-contain rounded-lg shadow-2xl bg-black"
+                       onLoad={(e) => {
+                           const img = e.target as HTMLImageElement;
+                           setPreviewImage(prev => prev ? { ...prev, dims: { w: img.naturalWidth, h: img.naturalHeight } } : null);
+                       }}
+                    />
+                    
+                    {/* Side Info Panel */}
+                    <div className="w-64 flex flex-col justify-center">
+                        <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-6 text-white shadow-xl">
+                            <h3 className="text-sm font-bold text-white/60 uppercase tracking-widest mb-4">Image Details</h3>
+                            
+                            <div className="space-y-4">
+                                <div>
+                                    <div className="text-xs text-white/40 mb-1">DIMENSIONS</div>
+                                    <div className="text-xl font-mono font-medium">
+                                        {previewImage.dims ? `${previewImage.dims.w} x ${previewImage.dims.h}` : 'Loading...'}
+                                    </div>
+                                    <div className="text-xs text-white/40 mt-1">pixels</div>
+                                </div>
+                                
+                                {previewImage.dims && (
+                                    <div>
+                                        <div className="text-xs text-white/40 mb-1">ASPECT RATIO</div>
+                                        <div className="text-lg font-mono text-white/80">
+                                            {(previewImage.dims.w / previewImage.dims.h).toFixed(2)}:1
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <div className="pt-4 border-t border-white/10">
+                                    <a 
+                                        href={previewImage.src} 
+                                        download="image.png"
+                                        className="flex items-center justify-center w-full py-2 bg-white text-black font-bold rounded-lg hover:bg-white/90 transition-colors"
+                                    >
+                                        Download Original
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                 </div>
+             </div>
+          )}
       </div>
       <style>{`
           @keyframes dashFlow {

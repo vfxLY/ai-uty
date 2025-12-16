@@ -6,6 +6,16 @@ import {
 import { generateFluxWorkflow, generateEditWorkflow, generateSdxlWorkflow } from '../../services/workflows';
 import { GenerationStatus } from '../../types';
 
+// --- Constants ---
+
+const SIZE_PRESETS = [
+  { label: 'Square (1:1)', w: 1024, h: 1024 },
+  { label: 'Landscape (16:9)', w: 1280, h: 720 },
+  { label: 'Portrait (9:16)', w: 720, h: 1280 },
+  { label: 'Tall (8:16)', w: 512, h: 1024 },
+  { label: 'Classic (4:3)', w: 1152, h: 864 },
+];
+
 // --- Types ---
 
 type ItemType = 'image' | 'generator' | 'editor';
@@ -83,6 +93,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   const [items, setItems] = useState<CanvasItem[]>([]);
   const [view, setView] = useState<ViewState>({ x: 0, y: 0, scale: 1 });
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const [activeSizeMenuId, setActiveSizeMenuId] = useState<string | null>(null);
   
   // Dragging State
   const [isDragging, setIsDragging] = useState(false);
@@ -127,6 +138,11 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   };
 
   const handleMouseDown = (e: MouseEvent) => {
+    // Close size menu if clicking outside
+    if (!(e.target as HTMLElement).closest('.size-menu-container')) {
+        setActiveSizeMenuId(null);
+    }
+
     // If clicking on an input/button inside an item, don't drag
     if ((e.target as HTMLElement).closest('input, textarea, button, label')) {
         return;
@@ -748,8 +764,20 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                             SDXL
                         </button>
                         <div className="w-[1px] h-4 bg-slate-300 mx-1"></div>
-                        <div className="flex items-center gap-1 px-2">
-                            <span className="text-[10px] font-bold text-slate-400">SIZE</span>
+                        
+                        {/* SIZE CONTROLS WITH PRESETS */}
+                        <div className="relative flex items-center gap-1 px-2 size-menu-container">
+                            <button 
+                                className="text-[10px] font-bold text-slate-400 hover:text-primary transition-colors flex items-center gap-1"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveSizeMenuId(activeSizeMenuId === item.id ? null : item.id);
+                                }}
+                            >
+                                SIZE
+                                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            
                             <input 
                                 className="w-12 bg-transparent border-b border-slate-300 text-xs text-center focus:outline-none" 
                                 value={item.data.width} 
@@ -761,6 +789,27 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                 value={item.data.height} 
                                 onChange={e => updateItemData(item.id, { height: Number(e.target.value) })}
                             />
+
+                            {/* Dropdown Menu */}
+                            {activeSizeMenuId === item.id && (
+                                <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-100 p-2 z-[60] min-w-[140px] animate-fade-in flex flex-col gap-1">
+                                    <div className="text-[10px] font-bold text-slate-400 px-2 py-1 mb-1">PRESETS</div>
+                                    {SIZE_PRESETS.map(preset => (
+                                        <button
+                                            key={preset.label}
+                                            className="text-left px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50 rounded-lg hover:text-primary transition-colors flex justify-between items-center group"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                updateItemData(item.id, { width: preset.w, height: preset.h });
+                                                setActiveSizeMenuId(null);
+                                            }}
+                                        >
+                                            <span>{preset.label}</span>
+                                            <span className="text-[9px] text-slate-300 group-hover:text-primary/50">{preset.w}x{preset.h}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -1354,13 +1354,6 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                        <span className="text-sm font-bold text-slate-600 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm whitespace-nowrap">Text to Image</span>
                    </button>
                    
-                   <button onClick={addEditNode} className="flex items-center gap-3 group/item">
-                       <div className="w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center text-slate-600 group-hover/item:text-blue-500 group-hover/item:scale-110 transition-all">
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                       </div>
-                       <span className="text-sm font-bold text-slate-600 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm whitespace-nowrap">Image Editor</span>
-                   </button>
-
                    {/* Add Image Upload Hidden Input */}
                    <input type="file" id="fab-upload" className="hidden" accept="image/*" onChange={handleUpload} />
                    

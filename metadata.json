@@ -1,0 +1,5 @@
+{
+  "name": "ComfyUI Pro Studio",
+  "description": "A high-end, professional interface for ComfyUI image generation workflows including Flux, Image Editing, and SDXL.",
+  "requestFramePermissions": []
+}

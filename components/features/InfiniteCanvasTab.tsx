@@ -16,6 +16,8 @@ const SIZE_PRESETS = [
   { label: 'Classic (4:3)', w: 1152, h: 864 },
 ];
 
+const CLIPBOARD_MARKER = "COMFY_UI_PRO_INTERNAL_NODES";
+
 // --- Types ---
 
 type ItemType = 'image' | 'generator' | 'editor';
@@ -203,7 +205,31 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       if (newItems.length === 1) setActiveItemId(newItems[0].id);
   }, [clipboard, topZ, view]);
 
-  // Cleanup & Keyboard Shortcuts
+  // Handle Paste Event (Native)
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+        // 1. If user is focused on an input/textarea, let browser handle normal text paste
+        if ((e.target as HTMLElement).matches('input, textarea')) {
+            return;
+        }
+
+        // 2. Check system clipboard content
+        const pastedText = e.clipboardData?.getData('text');
+
+        // 3. Only paste nodes if the system clipboard matches our internal marker.
+        // If the user copied text elsewhere, 'pastedText' will be that text,
+        // so this condition will fail, effectively ignoring the old internal clipboard.
+        if (pastedText === CLIPBOARD_MARKER) {
+            e.preventDefault(); // Prevent default paste behavior
+            pasteItems();
+        }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [pasteItems]);
+
+  // Keyboard Shortcuts (Copy & Delete)
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
         if (e.code === 'Space') {
@@ -212,18 +238,18 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
         
         // Copy: Ctrl+C
         if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-            if (selectedIds.size > 0) {
+            if (selectedIds.size > 0 && !(e.target as HTMLElement).matches('input, textarea')) {
                 const selectedItems = items.filter(i => selectedIds.has(i.id));
                 setClipboard(selectedItems);
+                
+                // Write a marker to system clipboard so we know the last copy was from us
+                navigator.clipboard.writeText(CLIPBOARD_MARKER).catch(err => {
+                    console.warn('Could not write to clipboard', err);
+                });
             }
         }
 
-        // Paste: Ctrl+V
-        if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-            if (clipboard.length > 0) {
-                pasteItems();
-            }
-        }
+        // Note: Paste (Ctrl+V) is now handled by the 'paste' event listener above
         
         // Delete: Delete/Backspace (only if not typing)
         if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
@@ -249,7 +275,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [selectedIds, items, clipboard, pasteItems]);
+  }, [selectedIds, items, clipboard]); // removed pasteItems dependency here as it's not used in this effect
 
   // --- Canvas Interaction Logic ---
 

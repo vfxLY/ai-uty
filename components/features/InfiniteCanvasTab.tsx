@@ -24,6 +24,10 @@ interface BaseItem {
 interface ImageItem extends BaseItem {
   type: 'image';
   src: string;
+  // Edit state
+  editPrompt?: string;
+  isEditing?: boolean;
+  editProgress?: number;
 }
 
 interface GeneratorItem extends BaseItem {
@@ -38,16 +42,20 @@ interface GeneratorItem extends BaseItem {
     cfg: number;
     isGenerating: boolean;
     progress: number;
-    // New fields for unified node
+    // Unified node fields
     resultImage?: string;
     mode: 'input' | 'result';
+    // Edit state for result
+    editPrompt?: string;
+    isEditing?: boolean;
+    editProgress?: number;
   };
 }
 
 interface EditorItem extends BaseItem {
   type: 'editor';
   data: {
-    targetId: string | null; // ID of the image being edited
+    targetId: string | null;
     prompt: string;
     steps: number;
     cfg: number;
@@ -183,7 +191,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
           type: 'generator',
           x: centerX,
           y: centerY,
-          width: 400, // Square shape like an image
+          width: 400,
           height: 400,
           zIndex: topZ + 1,
           data: {
@@ -277,12 +285,115 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       }));
   };
 
+  const updateImageItem = (id: string, partialData: Partial<ImageItem>) => {
+      setItems(prev => prev.map(item => {
+          if (item.id === id && item.type === 'image') {
+              return { ...item, ...partialData };
+          }
+          return item;
+      }));
+  };
+
   // --- Generation Logic ---
 
   const convertSrcToFile = async (src: string): Promise<File> => {
     const res = await fetch(src);
     const blob = await res.blob();
     return new File([blob], "source.png", { type: "image/png" });
+  };
+
+  const executeEdit = async (itemId: string, prompt: string) => {
+      const item = items.find(i => i.id === itemId);
+      if (!item) return;
+
+      const url = ensureHttps(serverUrl);
+      if (!url) {
+          alert("Please check Server URL");
+          return;
+      }
+
+      // Set editing state
+      if (item.type === 'image') {
+          updateImageItem(itemId, { isEditing: true, editProgress: 0 });
+      } else if (item.type === 'generator') {
+          updateItemData(itemId, { isEditing: true, editProgress: 0 });
+      }
+
+      try {
+          // 1. Get Source Image
+          let src = '';
+          if (item.type === 'image') {
+              src = (item as ImageItem).src;
+          } else if (item.type === 'generator') {
+              src = (item as GeneratorItem).data.resultImage || '';
+          }
+          
+          if (!src) throw new Error("No source image");
+
+          // 2. Upload
+          const file = await convertSrcToFile(src);
+          const serverFileName = await uploadImage(url, file);
+
+          if (item.type === 'image') updateImageItem(itemId, { editProgress: 20 });
+          else updateItemData(itemId, { editProgress: 20 });
+
+          // 3. Queue Prompt
+          const clientId = generateClientId();
+          // Use default steps/cfg for quick edit
+          const workflow = generateEditWorkflow(prompt, serverFileName, 20, 2.5);
+          const promptId = await queuePrompt(url, workflow, clientId);
+
+          // 4. Poll
+          const checkStatus = async () => {
+              try {
+                  const history = await getHistory(url, promptId);
+                  if (history[promptId]) {
+                      const result = history[promptId];
+                      if (result.status.status_str === 'success') {
+                           const outputs = result.outputs;
+                           for (const key in outputs) {
+                              if (outputs[key].images?.length > 0) {
+                                  const img = outputs[key].images[0];
+                                  const imgUrl = getImageUrl(url, img.filename, img.subfolder, img.type);
+                                  
+                                  // Update the node IN PLACE
+                                  if (item.type === 'image') {
+                                      updateImageItem(itemId, { src: imgUrl, isEditing: false, editProgress: 100, editPrompt: '' });
+                                  } else {
+                                      updateItemData(itemId, { resultImage: imgUrl, isEditing: false, editProgress: 100, editPrompt: '' });
+                                  }
+                                  return;
+                              }
+                           }
+                      } else if (result.status.status_str === 'error') {
+                           throw new Error("Edit failed");
+                      }
+                  }
+
+                  // Progress
+                  const logs = await getLogs(url);
+                  const parsed = parseConsoleProgress(logs, 20);
+                  const currentProg = item.type === 'image' ? ((item as ImageItem).editProgress || 20) : ((item as GeneratorItem).data.editProgress || 20);
+                  const newProg = parsed > 0 ? parsed : Math.min(currentProg + 2, 95);
+
+                  if (item.type === 'image') updateImageItem(itemId, { editProgress: newProg });
+                  else updateItemData(itemId, { editProgress: newProg });
+
+                  setTimeout(checkStatus, 1000);
+
+              } catch (e) {
+                  console.error(e);
+                  if (item.type === 'image') updateImageItem(itemId, { isEditing: false });
+                  else updateItemData(itemId, { isEditing: false });
+              }
+          };
+          checkStatus();
+
+      } catch (e: any) {
+          alert(e.message);
+          if (item.type === 'image') updateImageItem(itemId, { isEditing: false });
+          else updateItemData(itemId, { isEditing: false });
+      }
   };
 
   const executeGeneration = async (itemId: string) => {
@@ -345,7 +456,6 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                   // Update logic based on item type
                                   if (item.type === 'generator') {
                                       // Transform the node itself
-                                      // Pre-fetch image dimensions if needed, or just let it fill
                                       updateItemData(itemId, { 
                                           isGenerating: false, 
                                           progress: 100, 
@@ -404,6 +514,82 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
 
 
   // --- Renderers ---
+
+  const renderEditOverlay = (id: string, isEditing: boolean, progress: number, prompt: string | undefined, onPromptChange: (val: string) => void, onExecute: () => void) => (
+      <div 
+        className="absolute bottom-4 left-4 right-4 translate-y-8 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300 z-50"
+        onMouseDown={e => e.stopPropagation()}
+      >
+          <div className="glass-panel p-2 rounded-xl flex items-center gap-2 shadow-xl border border-white/50 bg-white/60 backdrop-blur-md">
+              <input 
+                  type="text" 
+                  className="flex-1 bg-transparent border-none text-xs font-medium text-slate-800 placeholder:text-slate-500 focus:outline-none px-2"
+                  placeholder="Modify this image (e.g., 'add sunglasses')..."
+                  value={prompt || ''}
+                  onChange={e => onPromptChange(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && onExecute()}
+              />
+              <button 
+                  onClick={onExecute}
+                  disabled={isEditing || !prompt}
+                  className="bg-slate-800 text-white rounded-lg p-1.5 hover:bg-black transition-colors disabled:opacity-50"
+              >
+                  {isEditing ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  ) : (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  )}
+              </button>
+          </div>
+          {isEditing && (
+              <div className="absolute -top-2 left-0 w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }}></div>
+              </div>
+          )}
+      </div>
+  );
+
+  const renderImageNode = (item: ImageItem) => (
+      <div 
+        className="relative group w-full h-full rounded-2xl shadow-sm hover:shadow-2xl transition-all duration-300 select-none"
+      >
+          {/* Main Image */}
+          <img 
+            src={item.src} 
+            alt="uploaded" 
+            className="w-full h-full object-cover rounded-2xl pointer-events-none select-none bg-white"
+          />
+          
+          {/* Close Button Override for visual consistency */}
+           <button 
+             className="absolute -top-3 -right-3 z-50 bg-white text-red-500 p-1.5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 hover:scale-110"
+             onClick={(e) => removeItem(item.id, e)}
+             onMouseDown={e => e.stopPropagation()}
+           >
+             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+           </button>
+
+          {/* Edit Overlay */}
+          {renderEditOverlay(
+              item.id, 
+              !!item.isEditing, 
+              item.editProgress || 0, 
+              item.editPrompt, 
+              (val) => updateImageItem(item.id, { editPrompt: val }),
+              () => executeEdit(item.id, item.editPrompt || '')
+          )}
+
+          {/* Download Icon (Top Left) */}
+          <a 
+              href={item.src} 
+              download={`img-${item.id}.png`}
+              className="absolute top-2 left-2 p-2 bg-black/20 text-white rounded-full opacity-0 group-hover:opacity-100 backdrop-blur-sm hover:bg-black/40 transition-all"
+              onClick={e => e.stopPropagation()}
+          >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          </a>
+      </div>
+  );
 
   const renderGeneratorNode = (item: GeneratorItem) => {
       const isInput = item.data.mode === 'input';
@@ -483,25 +669,34 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                     </div>
                 ) : (
                     <div className="w-full h-full relative group/image">
-                        <img src={item.data.resultImage} className="w-full h-full object-cover" alt="result" />
+                        <img src={item.data.resultImage} className="w-full h-full object-cover pointer-events-none select-none" alt="result" />
                         
-                        {/* Result Controls */}
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 opacity-0 group-hover/image:opacity-100 transition-all duration-300 translate-y-4 group-hover/image:translate-y-0">
-                            <button 
+                        {/* Edit Overlay for Generator Result */}
+                        {renderEditOverlay(
+                            item.id, 
+                            !!item.data.isEditing, 
+                            item.data.editProgress || 0, 
+                            item.data.editPrompt, 
+                            (val) => updateItemData(item.id, { editPrompt: val }),
+                            () => executeEdit(item.id, item.data.editPrompt || '')
+                        )}
+
+                        {/* Top Controls */}
+                        <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                             <button 
                                 onClick={() => updateItemData(item.id, { mode: 'input' })}
-                                className="bg-white/90 backdrop-blur text-slate-700 px-4 py-2 rounded-full shadow-lg text-xs font-bold hover:bg-white hover:scale-105 transition-all flex items-center gap-2"
+                                className="bg-black/20 text-white p-2 rounded-full backdrop-blur-sm hover:bg-black/40"
+                                title="Back to Prompt"
                             >
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                                Edit Prompt
                             </button>
                             <a 
                                 href={item.data.resultImage} 
                                 download={`gen-${item.id}.png`}
-                                className="bg-white/90 backdrop-blur text-slate-700 px-4 py-2 rounded-full shadow-lg text-xs font-bold hover:bg-white hover:scale-105 transition-all flex items-center gap-2"
+                                className="bg-black/20 text-white p-2 rounded-full backdrop-blur-sm hover:bg-black/40"
                                 onClick={e => e.stopPropagation()}
                             >
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                                Download
                             </a>
                         </div>
                     </div>
@@ -634,8 +829,8 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                         }}
                         onMouseDown={(e) => handleItemMouseDown(e, item.id)}
                       >
-                          {/* Close Button */}
-                          <button 
+                          {/* Close Button Override for visual consistency */}
+                           <button 
                              className={`absolute -top-3 -right-3 z-50 bg-white text-red-500 p-1.5 rounded-full shadow-lg opacity-0 transition-opacity hover:bg-red-50 hover:scale-110 ${activeItemId === item.id ? 'opacity-100' : 'group-hover:opacity-100'}`}
                              onClick={(e) => removeItem(item.id, e)}
                              onMouseDown={e => e.stopPropagation()}
@@ -644,13 +839,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                           </button>
 
                           {/* Content */}
-                          {item.type === 'image' && (
-                              <img 
-                                src={(item as ImageItem).src} 
-                                alt="item" 
-                                className="w-full h-full object-cover rounded-2xl shadow-sm pointer-events-none select-none bg-white"
-                              />
-                          )}
+                          {item.type === 'image' && renderImageNode(item as ImageItem)}
                           {item.type === 'generator' && renderGeneratorNode(item as GeneratorItem)}
                           {item.type === 'editor' && renderEditNode(item as EditorItem)}
                       </div>

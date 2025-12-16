@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, MouseEvent, WheelEvent, DragEvent } from 'react';
+import React, { useState, useRef, useEffect, MouseEvent, WheelEvent, DragEvent, KeyboardEvent, useCallback } from 'react';
 import Button from '../ui/Button';
 import { 
   ensureHttps, queuePrompt, getHistory, getImageUrl, generateClientId, uploadImage, getLogs, parseConsoleProgress 
@@ -88,17 +88,35 @@ interface InfiniteCanvasTabProps {
   setServerUrl: (url: string) => void;
 }
 
+interface SelectionBox {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
 const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setServerUrl }) => {
   // --- State ---
   const [items, setItems] = useState<CanvasItem[]>([]);
   const [view, setView] = useState<ViewState>({ x: 0, y: 0, scale: 1 });
-  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  
+  // Selection State
+  const [activeItemId, setActiveItemId] = useState<string | null>(null); // The one currently being edited/focused
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // Multi-selection set
   const [activeSizeMenuId, setActiveSizeMenuId] = useState<string | null>(null);
+  const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
+  
+  // Copy/Paste State
+  const [clipboard, setClipboard] = useState<CanvasItem[]>([]);
   
   // Dragging State
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [dragMode, setDragMode] = useState<'canvas' | 'item'>('canvas');
+  const [dragMode, setDragMode] = useState<'canvas' | 'item' | 'selection'>('canvas');
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
+
+  // Mouse Tracking for Paste
+  const mousePosRef = useRef({ x: 0, y: 0 });
 
   // Z-Index Management
   const [topZ, setTopZ] = useState(10);
@@ -106,12 +124,132 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   const containerRef = useRef<HTMLDivElement>(null);
   const pollInterval = useRef<number | null>(null);
 
-  // Cleanup
+  // --- Actions ---
+  
+  const pasteItems = useCallback(() => {
+      if (clipboard.length === 0) return;
+
+      // 1. Calculate center of clipboard items
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      clipboard.forEach(item => {
+          minX = Math.min(minX, item.x);
+          minY = Math.min(minY, item.y);
+          maxX = Math.max(maxX, item.x + item.width);
+          maxY = Math.max(maxY, item.y + item.height);
+      });
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+
+      // 2. Determine paste target position (Mouse Cursor)
+      let targetX = centerX + 20; // fallback offset
+      let targetY = centerY + 20;
+
+      if (containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          const clientX = mousePosRef.current.x;
+          const clientY = mousePosRef.current.y;
+          
+          // Only paste at mouse if mouse is effectively within/near window (simple check)
+          if (clientX > 0 && clientY > 0) {
+              const localX = clientX - rect.left;
+              const localY = clientY - rect.top;
+              targetX = (localX - view.x) / view.scale;
+              targetY = (localY - view.y) / view.scale;
+          }
+      }
+
+      // 3. Calculate offset from center to target
+      const dx = targetX - centerX;
+      const dy = targetY - centerY;
+
+      const newIdsMap = new Map<string, string>();
+      const newItems: CanvasItem[] = [];
+      let maxZ = topZ;
+
+      // First pass: Duplicate items and generate new IDs
+      clipboard.forEach(item => {
+          const newId = Math.random().toString(36).substr(2, 9);
+          newIdsMap.set(item.id, newId);
+          maxZ++;
+          
+          const clonedItem = JSON.parse(JSON.stringify(item));
+          clonedItem.id = newId;
+          clonedItem.x = item.x + dx;
+          clonedItem.y = item.y + dy;
+          clonedItem.zIndex = maxZ;
+          clonedItem.parentId = undefined; // Detach parent linkage for simplicity
+          
+          newItems.push(clonedItem);
+      });
+
+      // Second pass: Restore internal references if both target and source were pasted
+      newItems.forEach(item => {
+           if (item.type === 'editor') {
+               const oldTargetId = (item as EditorItem).data.targetId;
+               if (oldTargetId && newIdsMap.has(oldTargetId)) {
+                   (item as EditorItem).data.targetId = newIdsMap.get(oldTargetId) || null;
+               } else {
+                   (item as EditorItem).data.targetId = null; // Clear if target wasn't copied
+               }
+           }
+      });
+
+      setTopZ(maxZ);
+      setItems(prev => [...prev, ...newItems]);
+      
+      // Select the newly pasted items
+      const newSelectedIds = new Set(newItems.map(i => i.id));
+      setSelectedIds(newSelectedIds);
+      if (newItems.length === 1) setActiveItemId(newItems[0].id);
+  }, [clipboard, topZ, view]);
+
+  // Cleanup & Keyboard Shortcuts
   useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+        if (e.code === 'Space') {
+           setIsSpacePressed(true);
+        }
+        
+        // Copy: Ctrl+C
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+            if (selectedIds.size > 0) {
+                const selectedItems = items.filter(i => selectedIds.has(i.id));
+                setClipboard(selectedItems);
+            }
+        }
+
+        // Paste: Ctrl+V
+        if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+            if (clipboard.length > 0) {
+                pasteItems();
+            }
+        }
+        
+        // Delete: Delete/Backspace (only if not typing)
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
+            if (!(e.target as HTMLElement).matches('input, textarea')) {
+                setItems(prev => prev.filter(i => !selectedIds.has(i.id)));
+                setSelectedIds(new Set());
+                setActiveItemId(null);
+            }
+        }
+    };
+
+    const handleKeyUp = (e: globalThis.KeyboardEvent) => {
+        if (e.code === 'Space') {
+           setIsSpacePressed(false);
+        }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
     return () => {
       if (pollInterval.current) clearInterval(pollInterval.current);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [selectedIds, items, clipboard, pasteItems]);
 
   // --- Canvas Interaction Logic ---
 
@@ -143,17 +281,36 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
         setActiveSizeMenuId(null);
     }
 
-    // If clicking on an input/button inside an item, don't drag
+    // If clicking on an input/button inside an item, don't drag or select
     if ((e.target as HTMLElement).closest('input, textarea, button, label')) {
         return;
     }
 
-    // Check if clicking background
-    if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('canvas-bg')) {
-        setActiveItemId(null);
-        setDragMode('canvas');
+    const isCanvasBg = e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('canvas-bg');
+    
+    if (isCanvasBg) {
+        // Background Click
+        if (isSpacePressed || e.button === 1) { // Middle mouse or Space -> Pan
+            setDragMode('canvas');
+        } else {
+            // Default -> Selection Box
+            setDragMode('selection');
+            if (!e.shiftKey) {
+                setSelectedIds(new Set());
+                setActiveItemId(null);
+            }
+            // Start selection box relative to container
+            if (containerRef.current) {
+                const rect = containerRef.current.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                setSelectionBox({ startX: x, startY: y, currentX: x, currentY: y });
+            }
+        }
     } else {
-        setDragMode('item');
+        // Item Click (Handled via bubbling or explicitly if needed, but here we assume handleItemMouseDown captured it first if it hit an item container)
+        // Actually, handleItemMouseDown is on the item div, so this main handler handles background or bubbled events.
+        // If it bubbled up from an item, handleItemMouseDown already ran.
     }
     
     setIsDragging(true);
@@ -161,26 +318,70 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   };
 
   const handleMouseMove = (e: MouseEvent) => {
+    // Track global mouse position for pasting
+    mousePosRef.current = { x: e.clientX, y: e.clientY };
+
     if (isDragging) {
       const dx = e.clientX - dragStart.x;
       const dy = e.clientY - dragStart.y;
       
-      if (dragMode === 'item' && activeItemId) {
+      if (dragMode === 'item') {
+          // Move all selected items
           setItems(prev => prev.map(item => {
-              if (item.id === activeItemId) {
+              if (selectedIds.has(item.id)) {
                   return { ...item, x: item.x + dx / view.scale, y: item.y + dy / view.scale };
               }
               return item;
           }));
           setDragStart({ x: e.clientX, y: e.clientY });
-      } else {
+      } 
+      else if (dragMode === 'canvas') {
           setView(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
           setDragStart({ x: e.clientX, y: e.clientY });
+      }
+      else if (dragMode === 'selection' && selectionBox && containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          const currentX = e.clientX - rect.left;
+          const currentY = e.clientY - rect.top;
+          
+          setSelectionBox(prev => prev ? ({ ...prev, currentX, currentY }) : null);
+
+          // Calculate selection intersection
+          const boxX = Math.min(selectionBox.startX, currentX);
+          const boxY = Math.min(selectionBox.startY, currentY);
+          const boxW = Math.abs(currentX - selectionBox.startX);
+          const boxH = Math.abs(currentY - selectionBox.startY);
+
+          // Convert screen box to world coordinates for intersection checking
+          const worldX = (boxX - view.x) / view.scale;
+          const worldY = (boxY - view.y) / view.scale;
+          const worldW = boxW / view.scale;
+          const worldH = boxH / view.scale;
+
+          const newSelectedIds = new Set(e.shiftKey ? selectedIds : []);
+          
+          items.forEach(item => {
+              // Simple AABB intersection
+              if (
+                  item.x < worldX + worldW &&
+                  item.x + item.width > worldX &&
+                  item.y < worldY + worldH &&
+                  item.y + item.height > worldY
+              ) {
+                  newSelectedIds.add(item.id);
+              }
+          });
+          setSelectedIds(newSelectedIds);
       }
     }
   };
 
-  const handleMouseUp = () => setIsDragging(false);
+  const handleMouseUp = () => {
+      setIsDragging(false);
+      setSelectionBox(null);
+      // Don't clear dragMode immediately to prevent clicks after drag? No, reset it.
+      setDragMode('canvas'); 
+  };
 
   // --- Drag and Drop Logic ---
 
@@ -200,18 +401,14 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
         const img = new Image();
         img.src = src;
         img.onload = () => {
-            // Calculate world coordinates from drop position
             const clientX = e.clientX;
             const clientY = e.clientY;
-            
-            // Transform screen coordinates to canvas world coordinates
             const x = (clientX - view.x) / view.scale;
             const y = (clientY - view.y) / view.scale;
 
             const newItem: ImageItem = {
                 id: Math.random().toString(36).substr(2, 9),
                 type: 'image',
-                // Center the image on the cursor
                 x: x - (img.width / 4), 
                 y: y - (img.height / 4),
                 width: img.width / 2,
@@ -222,6 +419,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
             setTopZ(prev => prev + 1);
             setItems(prev => [...prev, newItem]);
             setActiveItemId(newItem.id);
+            setSelectedIds(new Set([newItem.id]));
         }
       };
       reader.readAsDataURL(file);
@@ -229,12 +427,34 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   };
 
   const handleItemMouseDown = (e: MouseEvent, id: string) => {
+      e.stopPropagation(); // Prevent canvas background click
+      
       // Bring to front
       const newZ = topZ + 1;
       setTopZ(newZ);
       setItems(prev => prev.map(i => i.id === id ? { ...i, zIndex: newZ } : i));
-      setActiveItemId(id);
       
+      // Selection Logic
+      if (e.shiftKey) {
+          const newSelected = new Set(selectedIds);
+          if (newSelected.has(id)) {
+              newSelected.delete(id);
+              if (activeItemId === id) setActiveItemId(null);
+          } else {
+              newSelected.add(id);
+              setActiveItemId(id);
+          }
+          setSelectedIds(newSelected);
+      } else {
+          // If clicking an item that is already selected, don't clear selection (allow group drag)
+          if (!selectedIds.has(id)) {
+              setSelectedIds(new Set([id]));
+              setActiveItemId(id);
+          } else {
+              setActiveItemId(id); // Just update focus
+          }
+      }
+
       if (!(e.target as HTMLElement).closest('input, textarea, button')) {
         setDragMode('item');
         setIsDragging(true);
@@ -273,6 +493,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       setTopZ(prev => prev + 1);
       setItems(prev => [...prev, newItem]);
       setActiveItemId(id);
+      setSelectedIds(new Set([id]));
   };
 
   const addEditNode = () => {
@@ -303,6 +524,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       setTopZ(prev => prev + 1);
       setItems(prev => [...prev, newItem]);
       setActiveItemId(id);
+      setSelectedIds(new Set([id]));
   };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -327,6 +549,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
             setTopZ(prev => prev + 1);
             setItems(prev => [...prev, newItem]);
             setActiveItemId(newItem.id);
+            setSelectedIds(new Set([newItem.id]));
         }
       };
       reader.readAsDataURL(file);
@@ -337,6 +560,11 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       e.stopPropagation();
       setItems(prev => prev.filter(i => i.id !== id));
       if (activeItemId === id) setActiveItemId(null);
+      setSelectedIds(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+      });
   };
 
   const updateItemData = (id: string, partialData: any) => {
@@ -435,6 +663,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
 
                                   setTopZ(prev => prev + 2);
                                   setItems(prev => [...prev, newItem]);
+                                  setSelectedIds(new Set([newItem.id])); // Select new item
 
                                   // Reset Source Item State
                                   if (item.type === 'image') {
@@ -561,6 +790,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                           };
                                           setTopZ(prev => prev + 2);
                                           setItems(prev => [...prev, newItem]);
+                                          setSelectedIds(new Set([newItem.id])); // Select new
                                           updateItemData(itemId, { isGenerating: false, progress: 100 });
                                       };
                                   }
@@ -598,54 +828,36 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
   // --- Renderers ---
 
   const renderConnections = () => {
-      if (!activeItemId) return null;
-
-      const activeItem = items.find(i => i.id === activeItemId);
-      if (!activeItem) return null;
-
       const connections: React.ReactElement[] = [];
-      
-      const getCenter = (item: CanvasItem) => ({
-          x: item.x + item.width / 2,
-          y: item.y + item.height / 2
-      });
+      const drawnConnections = new Set<string>(); // avoid duplicates
 
-      const activeCenter = getCenter(activeItem);
+      items.forEach(item => {
+          if (item.parentId) {
+              const parent = items.find(i => i.id === item.parentId);
+              if (parent) {
+                  const key = `${parent.id}-${item.id}`;
+                  if (!drawnConnections.has(key)) {
+                      drawnConnections.add(key);
+                      
+                      const parentCenter = { x: parent.x + parent.width / 2, y: parent.y + parent.height / 2 };
+                      const itemCenter = { x: item.x + item.width / 2, y: item.y + item.height / 2 };
+                      
+                      const isActive = selectedIds.has(item.id) || selectedIds.has(parent.id);
 
-      // 1. Upstream (Parent)
-      if (activeItem.parentId) {
-          const parent = items.find(i => i.id === activeItem.parentId);
-          if (parent) {
-              const parentCenter = getCenter(parent);
-              connections.push(
-                  <line 
-                      key={`parent-${activeItem.parentId}`}
-                      x1={parentCenter.x} y1={parentCenter.y}
-                      x2={activeCenter.x} y2={activeCenter.y}
-                      stroke="#3b82f6"
-                      strokeWidth="2"
-                      strokeDasharray="8,8"
-                      className="connection-line opacity-60"
-                  />
-              );
+                      connections.push(
+                          <line 
+                              key={key}
+                              x1={parentCenter.x} y1={parentCenter.y}
+                              x2={itemCenter.x} y2={itemCenter.y}
+                              stroke="#3b82f6"
+                              strokeWidth={isActive ? "2" : "1"}
+                              strokeDasharray="8,8"
+                              className={`connection-line ${isActive ? 'opacity-100' : 'opacity-30'}`}
+                          />
+                      );
+                  }
+              }
           }
-      }
-
-      // 2. Downstream (Children)
-      const children = items.filter(i => i.parentId === activeItemId);
-      children.forEach(child => {
-          const childCenter = getCenter(child);
-          connections.push(
-              <line 
-                  key={`child-${child.id}`}
-                  x1={activeCenter.x} y1={activeCenter.y}
-                  x2={childCenter.x} y2={childCenter.y}
-                  stroke="#3b82f6"
-                  strokeWidth="2"
-                  strokeDasharray="8,8"
-                  className="connection-line opacity-60"
-              />
-          );
       });
       
       if (connections.length === 0) return null;
@@ -980,7 +1192,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
           
           <div 
             ref={containerRef}
-            className="absolute inset-0 cursor-grab active:cursor-grabbing canvas-bg"
+            className={`absolute inset-0 canvas-bg ${isSpacePressed ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
             onWheel={handleWheel}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
@@ -999,7 +1211,13 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                   {items.map(item => (
                       <div
                         key={item.id}
-                        className={`absolute group transition-shadow duration-200 rounded-2xl ${activeItemId === item.id ? 'ring-4 ring-blue-400/30 shadow-2xl' : 'hover:ring-2 hover:ring-blue-400/10'}`}
+                        className={`absolute group transition-shadow duration-200 rounded-2xl ${
+                            selectedIds.has(item.id) 
+                            ? 'ring-4 ring-blue-500/50 shadow-2xl z-20' 
+                            : activeItemId === item.id 
+                                ? 'ring-2 ring-blue-400/30 shadow-xl' 
+                                : 'hover:ring-2 hover:ring-blue-400/10'
+                        }`}
                         style={{
                             left: item.x,
                             top: item.y,
@@ -1011,7 +1229,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                       >
                           {/* Close Button Override for visual consistency */}
                            <button 
-                             className={`absolute -top-3 -right-3 z-50 bg-white text-red-500 p-1.5 rounded-full shadow-lg opacity-0 transition-opacity hover:bg-red-50 hover:scale-110 ${activeItemId === item.id ? 'opacity-100' : 'group-hover:opacity-100'}`}
+                             className={`absolute -top-3 -right-3 z-50 bg-white text-red-500 p-1.5 rounded-full shadow-lg opacity-0 transition-opacity hover:bg-red-50 hover:scale-110 ${activeItemId === item.id || selectedIds.has(item.id) ? 'opacity-100' : 'group-hover:opacity-100'}`}
                              onClick={(e) => removeItem(item.id, e)}
                              onMouseDown={e => e.stopPropagation()}
                           >
@@ -1027,10 +1245,24 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                   
                   {items.length === 0 && (
                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-300 font-light text-2xl select-none pointer-events-none text-center animate-pulse">
-                          Click + to start creating
+                          Click + to start creating<br/>
+                          <span className="text-sm mt-2 block opacity-70">Space + Drag to Pan</span>
                       </div>
                   )}
               </div>
+              
+              {/* Selection Box Overlay */}
+              {selectionBox && (
+                  <div 
+                      className="absolute border border-blue-500 bg-blue-500/10 pointer-events-none z-50"
+                      style={{
+                          left: Math.min(selectionBox.startX, selectionBox.currentX),
+                          top: Math.min(selectionBox.startY, selectionBox.currentY),
+                          width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                          height: Math.abs(selectionBox.currentY - selectionBox.startY)
+                      }}
+                  />
+              )}
           </div>
 
           {/* Config Server Button (Subtle, Top Left) */}

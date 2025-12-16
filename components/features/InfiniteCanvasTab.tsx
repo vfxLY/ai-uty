@@ -19,6 +19,7 @@ interface BaseItem {
   width: number;
   height: number;
   zIndex: number;
+  parentId?: string; // Track upstream source
 }
 
 interface ImageItem extends BaseItem {
@@ -273,6 +274,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
           width: 300,
           height: 350,
           zIndex: topZ + 1,
+          parentId: selectedImage ? selectedImage.id : undefined,
           data: {
               targetId: selectedImage ? selectedImage.id : null,
               prompt: 'Make it sunset...',
@@ -411,6 +413,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                       width: item.width, // Inherit size
                                       height: item.height,
                                       zIndex: topZ + 2, // Bring to front
+                                      parentId: item.id, // LINK TO PARENT
                                       src: imgUrl
                                   };
 
@@ -521,11 +524,11 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                       updateItemData(itemId, { 
                                           isGenerating: false, 
                                           progress: 100, 
-                                          resultImage: imgUrl,
+                                          resultImage: imgUrl, 
                                           mode: 'result'
                                       });
                                   } else {
-                                      // Editor spawns new image (keep existing behavior for Editor for now)
+                                      // Editor spawns new image
                                       const imgObj = new Image();
                                       imgObj.src = imgUrl;
                                       imgObj.onload = () => {
@@ -537,6 +540,7 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                                               width: imgObj.width / 2,
                                               height: imgObj.height / 2,
                                               zIndex: topZ + 2,
+                                              parentId: item.id, // LINK TO EDITOR NODE
                                               src: imgUrl
                                           };
                                           setTopZ(prev => prev + 2);
@@ -576,6 +580,66 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
 
 
   // --- Renderers ---
+
+  const renderConnections = () => {
+      if (!activeItemId) return null;
+
+      const activeItem = items.find(i => i.id === activeItemId);
+      if (!activeItem) return null;
+
+      const connections: React.ReactElement[] = [];
+      
+      const getCenter = (item: CanvasItem) => ({
+          x: item.x + item.width / 2,
+          y: item.y + item.height / 2
+      });
+
+      const activeCenter = getCenter(activeItem);
+
+      // 1. Upstream (Parent)
+      if (activeItem.parentId) {
+          const parent = items.find(i => i.id === activeItem.parentId);
+          if (parent) {
+              const parentCenter = getCenter(parent);
+              connections.push(
+                  <line 
+                      key={`parent-${activeItem.parentId}`}
+                      x1={parentCenter.x} y1={parentCenter.y}
+                      x2={activeCenter.x} y2={activeCenter.y}
+                      stroke="#3b82f6"
+                      strokeWidth="2"
+                      strokeDasharray="8,8"
+                      className="animate-pulse opacity-60"
+                  />
+              );
+          }
+      }
+
+      // 2. Downstream (Children)
+      const children = items.filter(i => i.parentId === activeItemId);
+      children.forEach(child => {
+          const childCenter = getCenter(child);
+          connections.push(
+              <line 
+                  key={`child-${child.id}`}
+                  x1={activeCenter.x} y1={activeCenter.y}
+                  x2={childCenter.x} y2={childCenter.y}
+                  stroke="#3b82f6"
+                  strokeWidth="2"
+                  strokeDasharray="8,8"
+                  className="animate-pulse opacity-60"
+              />
+          );
+      });
+      
+      if (connections.length === 0) return null;
+
+      return (
+          <svg className="absolute top-0 left-0 pointer-events-none overflow-visible" style={{ width: 1, height: 1, zIndex: 0 }}>
+              {connections}
+          </svg>
+      );
+  };
 
   const renderEditOverlay = (id: string, isEditing: boolean, progress: number, prompt: string | undefined, onPromptChange: (val: string) => void, onExecute: () => void) => (
       <div 
@@ -880,6 +944,9 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
                 className="absolute origin-top-left will-change-transform"
                 style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
               >
+                  {/* Connection Lines Layer (Behind items) */}
+                  {renderConnections()}
+
                   {items.map(item => (
                       <div
                         key={item.id}

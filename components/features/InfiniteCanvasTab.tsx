@@ -530,37 +530,6 @@ const InfiniteCanvasTab: React.FC<InfiniteCanvasTabProps> = ({ serverUrl, setSer
       setSelectedIds(new Set([id]));
   };
 
-  const addEditNode = () => {
-      const selectedImage = items.find(i => i.id === activeItemId && i.type === 'image');
-      
-      const id = Math.random().toString(36).substr(2, 9);
-      const centerX = selectedImage ? selectedImage.x + selectedImage.width + 20 : ((-view.x) + (window.innerWidth / 2) - 160) / view.scale;
-      const centerY = selectedImage ? selectedImage.y : ((-view.y) + (window.innerHeight / 2) - 150) / view.scale;
-
-      const newItem: EditorItem = {
-          id,
-          type: 'editor',
-          x: centerX,
-          y: centerY,
-          width: 300,
-          height: 350,
-          zIndex: topZ + 1,
-          parentId: selectedImage ? selectedImage.id : undefined,
-          data: {
-              targetId: selectedImage ? selectedImage.id : null,
-              prompt: 'Make it sunset...',
-              steps: 20,
-              cfg: 2.5,
-              isGenerating: false,
-              progress: 0
-          }
-      };
-      setTopZ(prev => prev + 1);
-      setItems(prev => [...prev, newItem]);
-      setActiveItemId(id);
-      setSelectedIds(new Set([id]));
-  };
-
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
